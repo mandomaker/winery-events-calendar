@@ -7,44 +7,36 @@
 
 ## Creating the "Winery Events" Calendar
 
-```bash
-# List existing calendars to check if it already exists
-gog calendar list --account USER@gmail.com
+**Important:** `gog` cannot create calendars — only events. You must create the calendar via:
 
-# Create if missing
-gog calendar create --summary "Winery Events" --account USER@gmail.com
+1. **Google Calendar UI** — go to calendar.google.com, click "+" next to "Other calendars", choose "Create new calendar", name it "Winery Events"
+2. **Google Calendar API** — POST to `/calendar/v3/calendars` with an OAuth access token
+
+### Getting the Calendar ID
+
+```bash
+gog calendar calendars --account USER@gmail.com
 ```
 
-The calendar ID will be returned in the output — it looks like:
+Look for "Winery Events" in the output. The ID will look like:
 `abc123xyz@group.calendar.google.com`
 
-Save this ID. It's needed for all event creation and lookup calls.
+## Storing Configuration
 
-## Storing the Calendar ID
+Save to `skills/winery-events-calendar/config.env`:
 
-Save the calendar ID to the workspace for future runs:
-
-```bash
-echo "WINERY_CAL_ID=abc123xyz@group.calendar.google.com" >> ~/.openclaw/workspace/skills/winery-events-calendar/config.env
 ```
-
-Then read it in future runs:
-```bash
-source ~/.openclaw/workspace/skills/winery-events-calendar/config.env
+WINERY_CAL_ID=abc123xyz@group.calendar.google.com
+WINERY_ACCOUNT=user@gmail.com
 ```
 
 ## Calendar Settings (recommended)
 
 After creation, in Google Calendar UI:
-- Set color: Green (fits a winery/nature theme)
-- Make it visible on main calendar view
+- Set color to green (winery/nature theme)
+- Make visible on main calendar view
 - Enable notifications for new events
 
-## Verifying gog Calendar Permissions
+## Python NOT Required
 
-```bash
-# Test by listing events on primary calendar
-gog calendar events primary --from $(date -u +%Y-%m-%dT%H:%M:%SZ) --to $(date -u -d "+7 days" +%Y-%m-%dT%H:%M:%SZ) --account USER@gmail.com
-```
-
-If this returns without error, Calendar write access is working.
+The original skill included a Python search script. This has been removed — all Gmail searches use `gog` CLI directly, which is simpler and has no dependency requirements.
