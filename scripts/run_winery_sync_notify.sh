@@ -41,7 +41,7 @@ echo "$RESULT"
 CREATED_COUNT=$(printf '%s' "$RESULT" | python3 -c 'import sys, json; d=json.load(sys.stdin); print(len(d.get("created", [])))')
 if [ "$CREATED_COUNT" -gt 0 ]; then
   SUMMARY=$(printf '%s' "$RESULT" | python3 -c 'import sys, json; d=json.load(sys.stdin); items=d.get("created", []); print("\n".join(["- {} ({})".format(i["subject"], i["start"][:10]) for i in items]))')
-  MSG=$(printf '🍷 Winery Events Update\n\nAdded events:\n%s' "$SUMMARY")
+  MSG=$(printf 'Winery Events Update\n\nAdded events:\n%s' "$SUMMARY")
   openclaw message send --channel discord --target "$DISCORD_CHANNEL" --message "$MSG"
   write_status "ok" "$CREATED_COUNT" "" "$SUMMARY"
 else
