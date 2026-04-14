@@ -33,14 +33,18 @@ cd "$WORKDIR"
 RESULT_FILE=$(mktemp)
 trap 'rm -f "$RESULT_FILE"' EXIT
 
-if ! python3 scripts/run_winery_sync.py --account "$ACCOUNT" --calendar-id "$CAL_ID" --days "$LOOKBACK_DAYS" > "$RESULT_FILE" 2>&1; then
-  RESULT=$(cat "$RESULT_FILE")
+ERR_FILE=$(mktemp)
+trap 'rm -f "$RESULT_FILE" "$ERR_FILE"' EXIT
+
+if ! python3 scripts/run_winery_sync.py --account "$ACCOUNT" --calendar-id "$CAL_ID" --days "$LOOKBACK_DAYS" > "$RESULT_FILE" 2> "$ERR_FILE"; then
+  RESULT=$(cat "$ERR_FILE")
   write_status "error" "0" "sync-failed" "$RESULT"
   openclaw message send --channel discord --target "$DISCORD_CHANNEL" --message "Winery sync failed. Check /tmp/winery-events-sync.err.log or Mission Control for details."
-  cat "$RESULT_FILE" >&2
+  cat "$ERR_FILE" >&2
   exit 1
 fi
 
+cat "$ERR_FILE" >&2
 cat "$RESULT_FILE"
 CREATED_COUNT=$(python3 - "$RESULT_FILE" <<'PY'
 import json, sys
