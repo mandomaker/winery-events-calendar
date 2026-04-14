@@ -309,7 +309,6 @@ def create_event(account: str, calendar_id: str, candidate: Candidate) -> None:
         "--from", candidate.start,
         "--to", candidate.end,
         "--description", candidate.description,
-        *((["--where", candidate.location]) if candidate.location else []),
         "--account", account,
         "--force",
     ])
