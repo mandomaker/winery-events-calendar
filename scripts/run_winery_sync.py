@@ -21,9 +21,11 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("America/Los_Angeles")
+STATE_PATH = Path("/Users/mando/.openclaw/workspace/data/winery-sync-seen.json")
 SEARCHES = [
     "winery",
     "vineyard",
@@ -282,24 +284,48 @@ def extract_rsvp_url(body: str) -> str:
 
 def get_existing_events(account: str, calendar_id: str, days: int) -> list[dict]:
     start = (datetime.now(TZ) - timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    end = (datetime.now(TZ) + timedelta(days=120)).replace(hour=23, minute=59, second=0, microsecond=0).isoformat()
+    end = (datetime.now(TZ) + timedelta(days=45)).replace(hour=23, minute=59, second=0, microsecond=0).isoformat()
     out = run(["gog", "calendar", "events", calendar_id, "--from", start, "--to", end, "--account", account, "--json"])
     data = json.loads(out)
     return data.get("events") or data.get("items") or data if isinstance(data, list) else []
 
 
-def has_duplicate(existing: list[dict], subject: str, start_iso: str) -> bool:
-    day = start_iso[:10]
-    normalized = re.sub(r"[^a-z0-9]+", " ", subject.lower()).strip()
+def normalized_text(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+
+def duplicate_reason(existing: list[dict], candidate: Candidate) -> str | None:
+    day = candidate.start[:10]
+    subject_norm = normalized_text(candidate.subject)
+    message_marker = f"Message ID: {candidate.message_id}"
     for ev in existing:
-        summary = (ev.get("summary") or ev.get("title") or "").lower()
+        summary = (ev.get("summary") or ev.get("title") or "")
+        description = ev.get("description") or ""
         evstart = ev.get("start") or ev.get("startTime") or ev.get("from") or {}
         if isinstance(evstart, dict):
             evstart = evstart.get("dateTime") or evstart.get("date") or ""
-        evnorm = re.sub(r"[^a-z0-9]+", " ", summary).strip()
-        if evstart.startswith(day) and (normalized[:28] in evnorm or evnorm[:28] in normalized):
-            return True
-    return False
+        summary_norm = normalized_text(summary)
+        if message_marker in description:
+            return "message-id"
+        if evstart.startswith(day) and summary_norm == subject_norm:
+            return "same-day-title"
+        if evstart.startswith(day) and subject_norm and summary_norm and (subject_norm in summary_norm or summary_norm in subject_norm):
+            return "same-day-fuzzy-title"
+    return None
+
+
+def load_seen() -> dict:
+    if not STATE_PATH.exists():
+        return {"message_ids": []}
+    try:
+        return json.loads(STATE_PATH.read_text())
+    except Exception:
+        return {"message_ids": []}
+
+
+def save_seen(seen: dict) -> None:
+    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    STATE_PATH.write_text(json.dumps(seen, indent=2))
 
 
 def create_event(account: str, calendar_id: str, candidate: Candidate) -> None:
@@ -325,6 +351,8 @@ def main() -> None:
 
     messages = search_messages(args.account, args.days, args.max)
     existing = get_existing_events(args.account, args.calendar_id, args.days)
+    seen = load_seen()
+    seen_ids = set(seen.get("message_ids", []))
 
     created, duplicates, skipped = [], [], []
 
@@ -335,6 +363,9 @@ def main() -> None:
         sender = extract_header(raw, "from")
         body = raw
 
+        if message_id in seen_ids:
+            duplicates.append({"message_id": message_id, "subject": subject or "", "reason": "seen-message-id"})
+            continue
         if not subject or subject.lower() == "unknown subject":
             skipped.append({"message_id": message_id, "reason": "missing-subject"})
             continue
@@ -367,13 +398,23 @@ def main() -> None:
         description = "\n".join(description_parts)
         candidate = Candidate(message_id=message_id, subject=subject, sender=sender or "Unknown sender", start=start, end=end, description=description, location=location, rsvp_url=rsvp_url)
 
-        if has_duplicate(existing, candidate.subject, candidate.start):
-            duplicates.append(candidate.__dict__)
+        dup_reason = duplicate_reason(existing, candidate)
+        if dup_reason:
+            duplicates.append({**candidate.__dict__, "reason": dup_reason})
             continue
 
         if not args.dry_run:
             create_event(args.account, args.calendar_id, candidate)
+            existing.append({
+                "summary": candidate.subject,
+                "description": candidate.description,
+                "start": {"dateTime": candidate.start},
+            })
+            seen_ids.add(candidate.message_id)
         created.append(candidate.__dict__)
+
+    if not args.dry_run:
+        save_seen({"message_ids": sorted(seen_ids)})
 
     print(json.dumps({
         "emails_scanned": len(messages),

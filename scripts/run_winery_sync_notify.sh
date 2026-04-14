@@ -30,18 +30,42 @@ PY
 }
 
 cd "$WORKDIR"
-if ! RESULT=$(python3 scripts/run_winery_sync.py --account "$ACCOUNT" --calendar-id "$CAL_ID" --days "$LOOKBACK_DAYS" 2>&1); then
+RESULT_FILE=$(mktemp)
+trap 'rm -f "$RESULT_FILE"' EXIT
+
+if ! python3 scripts/run_winery_sync.py --account "$ACCOUNT" --calendar-id "$CAL_ID" --days "$LOOKBACK_DAYS" > "$RESULT_FILE" 2>&1; then
+  RESULT=$(cat "$RESULT_FILE")
   write_status "error" "0" "sync-failed" "$RESULT"
   openclaw message send --channel discord --target "$DISCORD_CHANNEL" --message "Winery sync failed. Check /tmp/winery-events-sync.err.log or Mission Control for details."
-  echo "$RESULT" >&2
+  cat "$RESULT_FILE" >&2
   exit 1
 fi
 
-echo "$RESULT"
-CREATED_COUNT=$(printf '%s' "$RESULT" | python3 -c 'import sys, json; d=json.load(sys.stdin); print(len(d.get("created", [])))')
+cat "$RESULT_FILE"
+CREATED_COUNT=$(python3 - "$RESULT_FILE" <<'PY'
+import json, sys
+with open(sys.argv[1]) as f:
+    result = json.load(f)
+print(len(result.get('created', [])))
+PY
+)
+
 if [ "$CREATED_COUNT" -gt 0 ]; then
-  SUMMARY=$(printf '%s' "$RESULT" | python3 -c 'import sys, json; d=json.load(sys.stdin); items=d.get("created", []); print("\n".join(["- {} ({})".format(i["subject"], i["start"][:10]) for i in items]))')
-  MSG=$(printf 'Winery Events Update\n\nAdded events:\n%s' "$SUMMARY")
+  SUMMARY=$(python3 - "$RESULT_FILE" <<'PY'
+import json, sys
+with open(sys.argv[1]) as f:
+    result = json.load(f)
+print("\n".join(f"- {item['subject']} ({item['start'][:10]})" for item in result.get('created', [])))
+PY
+)
+  MSG=$(python3 - "$RESULT_FILE" <<'PY'
+import json, sys
+with open(sys.argv[1]) as f:
+    result = json.load(f)
+summary = "\n".join(f"- {item['subject']} ({item['start'][:10]})" for item in result.get('created', []))
+print("Winery Events Update\n\nAdded events:\n" + summary)
+PY
+)
   openclaw message send --channel discord --target "$DISCORD_CHANNEL" --message "$MSG"
   write_status "ok" "$CREATED_COUNT" "" "$SUMMARY"
 else
