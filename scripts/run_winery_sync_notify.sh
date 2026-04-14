@@ -32,7 +32,7 @@ PY
 cd "$WORKDIR"
 if ! RESULT=$(python3 scripts/run_winery_sync.py --account "$ACCOUNT" --calendar-id "$CAL_ID" --days "$LOOKBACK_DAYS" 2>&1); then
   write_status "error" "0" "sync-failed" "$RESULT"
-  openclaw message send --channel discord --target "$DISCORD_CHANNEL" --message "⚠️ Winery sync failed. Check /tmp/winery-events-sync.err.log or Mission Control for details."
+  openclaw message send --channel discord --target "$DISCORD_CHANNEL" --message "Winery sync failed. Check /tmp/winery-events-sync.err.log or Mission Control for details."
   echo "$RESULT" >&2
   exit 1
 fi
