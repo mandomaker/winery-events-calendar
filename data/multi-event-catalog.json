@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Catalog of pre-known multi-event announcements for image-heavy emails that can't be parsed from text. Matched by sender domain + email HTML <title>. Add entries as new image-only newsletters are discovered.",
+  "description": "Catalog of pre-known multi-event announcements for image-heavy emails that can't be parsed from text. Matched by sender domain/email + email HTML <title> or raw-body substring. Add entries as new image-only newsletters are discovered.",
   "timezone": "America/Los_Angeles",
   "entries": [
     {
@@ -23,6 +23,149 @@
           "subject": "Dining Alfresco",
           "start": "2026-06-27T18:00:00",
           "end": "2026-06-27T20:00:00"
+        }
+      ]
+    },
+    {
+      "sender_email": "info@ambarestate.com",
+      "raw_contains": "Upcoming Events",
+      "extraction_mode": "ambar-multi-event-text",
+      "events": [
+        {
+          "subject": "Our Vineyard Table Dinner",
+          "start": "2026-05-16T18:00:00",
+          "end": "2026-05-16T20:30:00",
+          "location": "Ambar Estate",
+          "rsvp_url": "https://www.exploretock.com/ambar-estate/event/596047/our-vineyard-table"
+        },
+        {
+          "subject": "A Solstice Celebration Dinner",
+          "start": "2026-06-20T18:00:00",
+          "end": "2026-06-20T20:30:00",
+          "location": "Ambar Estate",
+          "rsvp_url": "https://www.exploretock.com/ambar-estate/event/private/baa702e3-920a-44db-8f43-301e72e5b851"
+        }
+      ]
+    },
+    {
+      "sender_email": "events@alexanawinery.com",
+      "message_id": "19d734cc41a617da",
+      "extraction_mode": "alexana-multi-event-text",
+      "events": [
+        {
+          "subject": "Chardonnay & Seafood Dinner",
+          "start": "2026-05-02T17:30:00",
+          "end": "2026-05-02T20:30:00",
+          "location": "Alexana Estate",
+          "rsvp_url": "https://www.alexanawinery.com/product/2026-chardonnay-seafood-winemaker-dinner"
+        },
+        {
+          "subject": "Rosé Release Party",
+          "start": "2026-05-16T11:00:00",
+          "end": "2026-05-16T17:00:00",
+          "location": "Alexana Estate",
+          "rsvp_url": "https://www.alexanawinery.com/reservation/type/rose-release-party-2026"
+        },
+        {
+          "subject": "Corazon del Sol takeover: Empanada Fest",
+          "start": "2026-05-31T11:00:00",
+          "end": "2026-05-31T16:00:00",
+          "location": "Alexana Estate",
+          "rsvp_url": "https://www.alexanawinery.com/reservation/type/empanadafest"
+        },
+        {
+          "subject": "Heritage & VISIONARY Dinner",
+          "start": "2026-06-13T18:00:00",
+          "end": "2026-06-13T21:00:00",
+          "location": "Alexana Estate"
+        },
+        {
+          "subject": "Harvest Party",
+          "start": "2026-08-14T11:00:00",
+          "end": "2026-08-14T17:00:00",
+          "location": "Alexana Estate"
+        },
+        {
+          "subject": "Harvest Party",
+          "start": "2026-08-15T11:00:00",
+          "end": "2026-08-15T17:00:00",
+          "location": "Alexana Estate"
+        },
+        {
+          "subject": "Revana Takeover: Steakhouse Dinner",
+          "start": "2026-11-07T18:00:00",
+          "end": "2026-11-07T21:00:00",
+          "location": "Alexana Estate"
+        }
+      ]
+    },
+    {
+      "sender_email": "events@alexanawinery.com",
+      "message_id": "19c0c1717f20552a",
+      "extraction_mode": "alexana-multi-event-text",
+      "events": [
+        {
+          "subject": "Spring Oregon Chardonnay Celebration",
+          "start": "2026-02-21T11:00:00",
+          "end": "2026-02-21T17:00:00",
+          "location": "The Allison Inn & Spa",
+          "rsvp_url": "https://oregonchardonnaycelebration.org/occ-2026/"
+        },
+        {
+          "subject": "2026 Spring Release Winemaker Dinner",
+          "start": "2026-03-07T18:00:00",
+          "end": "2026-03-07T21:00:00",
+          "location": "Alexana Estate"
+        },
+        {
+          "subject": "Spring Release Party",
+          "start": "2026-03-14T11:00:00",
+          "end": "2026-03-14T17:00:00",
+          "location": "Alexana Estate",
+          "rsvp_url": "https://www.alexanawinery.com/reservation/type/2026-spring-release-party/"
+        },
+        {
+          "subject": "Spring Release Party",
+          "start": "2026-03-15T11:00:00",
+          "end": "2026-03-15T17:00:00",
+          "location": "Alexana Estate",
+          "rsvp_url": "https://www.alexanawinery.com/reservation/type/2026-spring-release-party/"
+        },
+        {
+          "subject": "Empanada Fest",
+          "start": "2026-04-27T11:00:00",
+          "end": "2026-04-27T15:00:00",
+          "location": "Alexana Estate"
+        },
+        {
+          "subject": "Harvest Party",
+          "start": "2026-08-14T11:00:00",
+          "end": "2026-08-14T17:00:00",
+          "location": "Alexana Estate"
+        },
+        {
+          "subject": "Harvest Party",
+          "start": "2026-08-15T11:00:00",
+          "end": "2026-08-15T17:00:00",
+          "location": "Alexana Estate"
+        },
+        {
+          "subject": "Member Exclusive: Fall Release Party",
+          "start": "2026-09-26T11:00:00",
+          "end": "2026-09-26T17:00:00",
+          "location": "Alexana Estate"
+        },
+        {
+          "subject": "Member Exclusive: Fall Release Party",
+          "start": "2026-09-27T11:00:00",
+          "end": "2026-09-27T17:00:00",
+          "location": "Alexana Estate"
+        },
+        {
+          "subject": "Revana Takeover: Steakhouse Dinner",
+          "start": "2026-11-07T18:00:00",
+          "end": "2026-11-07T21:00:00",
+          "location": "Alexana Estate"
         }
       ]
     }

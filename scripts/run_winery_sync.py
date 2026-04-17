@@ -381,6 +381,12 @@ def parse_catalog_multi_events(subject: str, raw: str, sender_email: str, sender
         title_needle = (entry.get("html_title_match") or "").lower()
         if title_needle and title_needle not in html_title:
             continue
+        raw_needle = entry.get("raw_contains") or ""
+        if raw_needle and raw_needle not in raw:
+            continue
+        entry_message_id = entry.get("message_id") or ""
+        if entry_message_id and entry_message_id != message_id:
+            continue
         mode = entry.get("extraction_mode") or "catalog-image-fallback"
         candidates = []
         for item in entry.get("events", []):
@@ -409,6 +415,94 @@ def parse_catalog_multi_events(subject: str, raw: str, sender_email: str, sender
 
 
 PAST_DATE_GRACE_DAYS = 7
+
+FOOTER_STOP_TERMS = [
+    "copyright",
+    "our mailing address",
+    "unsubscribe",
+    "update your preferences",
+    "view this email in your browser",
+    "questions?",
+]
+
+def trim_footer_lines(lines: list[str]) -> list[str]:
+    out = []
+    for line in lines:
+        low = line.lower().strip()
+        if any(stop in low for stop in FOOTER_STOP_TERMS):
+            break
+        out.append(line)
+    return out
+
+
+def parse_month_day(value: str) -> tuple[int, int] | None:
+    value = value.strip()
+    m = re.match(r"(?i)^([A-Za-z]+)\s+(\d{1,2})", value)
+    if m:
+        month = MONTH_MAP.get(m.group(1).lower(), MONTH_ABBR.get(m.group(1).lower()[:3]))
+        if month:
+            return month, int(m.group(2))
+    m = re.match(r"^(\d{1,2})/(\d{1,2})$", value)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    return None
+
+
+def infer_event_time(title: str) -> tuple[int, int, int]:
+    low = title.lower()
+    if any(k in low for k in ["dinner", "supper", "steakhouse"]):
+        return 18, 0, 180
+    if any(k in low for k in ["party", "open house", "release", "tasting", "festival", "fest"]):
+        return 11, 0, 360
+    return 12, 0, 180
+
+
+def _roll_forward_if_stale(start: datetime, now: datetime) -> datetime:
+    stale_cutoff = now - timedelta(days=PAST_DATE_GRACE_DAYS)
+    if start < stale_cutoff:
+        try:
+            return start.replace(year=start.year + 1)
+        except ValueError:
+            pass
+    return start
+
+
+def parse_generic_multi_events(subject: str, body: str, sender: str, message_id: str) -> list[Candidate]:
+    now = datetime.now(TZ)
+    year = now.year
+    lines = [line.strip() for line in body.splitlines()]
+    lines = [line for line in trim_footer_lines(lines) if line]
+    candidates: list[Candidate] = []
+    seen_keys: set[tuple[str, str]] = set()
+
+    pipe_row = re.compile(
+        r"(?i)^([A-Za-z]+\s+\d{1,2}|\d{1,2}/\d{1,2})\s*\|\s*([^|]+?)(?:\s*\|\s*(Book Now|Coming Soon|Sold Out))?$"
+    )
+    for line in lines:
+        m = pipe_row.match(line)
+        if not m:
+            continue
+        md = parse_month_day(m.group(1))
+        if not md:
+            continue
+        month, day = md
+        title = m.group(2).strip()
+        hour, minute, dur = infer_event_time(title)
+        try:
+            start = datetime(year, month, day, hour, minute, tzinfo=TZ)
+        except ValueError:
+            continue
+        start = _roll_forward_if_stale(start, now)
+        end = start + timedelta(minutes=dur)
+        key = (title.lower(), start.isoformat())
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        candidates.append(
+            build_candidate(message_id, title, sender, start, end, body, "generic-text-multi", "", "")
+        )
+
+    return candidates
 
 
 def parse_date(body: str) -> datetime | None:
@@ -643,6 +737,28 @@ def main() -> None:
             continue
         if not subject or subject.lower() == "unknown subject":
             skipped.append({"message_id": message_id, "sender_email": sender_email, "reason": "missing-subject"})
+            continue
+
+        generic_candidates = parse_generic_multi_events(subject, text_body, sender, message_id)
+        if generic_candidates:
+            log_progress(f"generic-match message_id={message_id} candidates={len(generic_candidates)}")
+            for candidate in generic_candidates:
+                log_progress(f"generic-candidate message_id={message_id} subject={candidate.subject} start={candidate.start}")
+                dup_reason = duplicate_reason(existing, candidate)
+                if dup_reason or candidate.message_id in seen_ids:
+                    log_progress(f"generic-duplicate message_id={message_id} subject={candidate.subject} reason={dup_reason or 'seen-message-id'}")
+                    duplicates.append({**candidate.__dict__, "reason": dup_reason or "seen-message-id"})
+                    continue
+                if not args.dry_run:
+                    create_event(args.account, args.calendar_id, candidate)
+                    existing.append({
+                        "summary": candidate.subject,
+                        "description": candidate.description,
+                        "start": {"dateTime": candidate.start},
+                    })
+                    seen_ids.add(candidate.message_id)
+                log_progress(f"generic-created message_id={message_id} subject={candidate.subject}")
+                created.append(candidate.__dict__)
             continue
 
         catalog_candidates = parse_catalog_multi_events(
