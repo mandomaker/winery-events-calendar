@@ -18,21 +18,32 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from difflib import SequenceMatcher
 from html import unescape
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("America/Los_Angeles")
-STATE_PATH = Path("/Users/mando/.openclaw/workspace/data/winery-sync-seen.json")
-ALLOWLIST_PATH = Path("/Users/mando/.openclaw/workspace/data/winery-allowlist.json")
-STATUS_PATH = Path("/Users/mando/.openclaw/workspace/data/winery-allowlist-status.json")
-NEGATIVE_SUBJECT_TERMS = [
+
+DEFAULT_DATA_DIR = Path(
+    os.environ.get("WINERY_DATA_DIR")
+    or (Path.home() / ".openclaw" / "workspace" / "data")
+)
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_CATALOG_PATH = SCRIPT_DIR.parent / "data" / "multi-event-catalog.json"
+
+STATE_PATH = Path(os.environ.get("WINERY_STATE_PATH") or (DEFAULT_DATA_DIR / "winery-sync-seen.json"))
+ALLOWLIST_PATH = Path(os.environ.get("WINERY_ALLOWLIST_PATH") or (DEFAULT_DATA_DIR / "winery-allowlist.json"))
+STATUS_PATH = Path(os.environ.get("WINERY_STATUS_PATH") or (DEFAULT_DATA_DIR / "winery-allowlist-status.json"))
+CATALOG_PATH = Path(os.environ.get("WINERY_CATALOG_PATH") or DEFAULT_CATALOG_PATH)
+NOISE_SUBJECT_TERMS = [
     "receipt",
     "invoice",
     "order confirmed",
@@ -52,6 +63,26 @@ NEGATIVE_SUBJECT_TERMS = [
     "pinot noir",
     "chardonnay",
     "pinot gris",
+    "experience the reimagined",
+    "vineyard experiences reimagined",
+    "what's happening in downtown camas",
+    "the new releases are here",
+    "this is how we rhône",
+    "pinot blanc oregon",
+    "save more when you take more",
+    "limited access",
+    "2025 pinot",
+    "2023 ambar estate",
+    "aurora allocation",
+]
+NOISE_BODY_TERMS = [
+    "discount",
+    "coupon",
+    "sale",
+    "savings",
+    "% off",
+    "shipping included",
+    "now in stock",
 ]
 EVENT_TERMS = [
     "tasting",
@@ -116,9 +147,23 @@ def build_candidate(message_id: str, subject: str, sender: str, dt: datetime, en
     )
 
 
-def run(cmd: list[str]) -> str:
-    p = subprocess.run(cmd, capture_output=True)
+SUBPROCESS_TIMEOUT_SECONDS = 120
+
+
+def run(cmd: list[str], timeout: float = SUBPROCESS_TIMEOUT_SECONDS) -> str:
+    try:
+        p = subprocess.run(cmd, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        sys.stderr.write(
+            f"[winery-sync] subprocess timeout after {timeout}s: {' '.join(cmd[:3])}...\n"
+        )
+        if exc.stderr:
+            sys.stderr.write(exc.stderr.decode("utf-8", "replace"))
+        raise SystemExit(124) from exc
     if p.returncode != 0:
+        sys.stderr.write(
+            f"[winery-sync] subprocess failed rc={p.returncode}: {' '.join(cmd[:3])}...\n"
+        )
         sys.stderr.write(p.stderr.decode("utf-8", "replace"))
         raise SystemExit(p.returncode)
     return p.stdout.decode("utf-8", "replace")
@@ -162,9 +207,9 @@ def get_message(account: str, message_id: str) -> str:
 def extract_header(raw: str, name: str) -> str:
     m = re.search(rf"(?:^|\n){re.escape(name)}:\s*(.+)", raw, re.I)
     if m:
-        return m.group(1).strip()
+        return unescape(m.group(1).strip())
     m = re.search(rf"\b{name.lower()}\s+(.+?)(?=\s+(?:date|to|cc|bcc|subject|unsubscribe|label_ids|thread_id)\b|$)", raw, re.I | re.S)
-    return re.sub(r"\s+", " ", m.group(1)).strip() if m else ""
+    return unescape(re.sub(r"\s+", " ", m.group(1)).strip()) if m else ""
 
 
 def parse_sender_email(sender: str) -> str:
@@ -178,15 +223,23 @@ def parse_sender_domain(sender: str) -> str:
     return email.split("@", 1)[1] if "@" in email else ""
 
 
+class AllowlistError(RuntimeError):
+    pass
+
+
 def load_allowlist() -> tuple[set[str], set[str], dict]:
     if not ALLOWLIST_PATH.exists():
-        return set(), set(), {}
+        raise AllowlistError(f"allowlist file not found: {ALLOWLIST_PATH}")
     try:
         data = json.loads(ALLOWLIST_PATH.read_text())
-    except Exception:
-        return set(), set(), {}
+    except (json.JSONDecodeError, OSError) as exc:
+        raise AllowlistError(f"failed to read/parse allowlist {ALLOWLIST_PATH}: {exc}") from exc
     senders = {str(v).strip().lower() for v in data.get("senders", []) if str(v).strip()}
     domains = {str(v).strip().lower() for v in data.get("domains", []) if str(v).strip()}
+    if not senders and not domains:
+        raise AllowlistError(
+            f"allowlist {ALLOWLIST_PATH} has no senders or domains; refusing to run empty scan"
+        )
     return senders, domains, data
 
 
@@ -199,26 +252,9 @@ def sender_is_allowlisted(sender: str, allow_senders: set[str], allow_domains: s
 def looks_like_noise(subject: str, body: str) -> bool:
     subject_l = subject.lower()
     text = f"{subject}\n{body}".lower()
-    if any(term in subject_l for term in NEGATIVE_SUBJECT_TERMS):
+    if any(term in subject_l for term in NOISE_SUBJECT_TERMS):
         return True
-    if any(term in text for term in ["discount", "coupon", "sale", "savings", "% off", "shipping included", "now in stock"]):
-        return True
-    weak_marketing_subjects = [
-        "experience the reimagined",
-        "vineyard experiences reimagined",
-        "what's happening in downtown camas",
-        "the new releases are here",
-        "this is how we rhône",
-        "pinot blanc oregon",
-        "save more when you take more",
-        "limited access",
-        "introducing the",
-        "2025 pinot",
-        "2023 ambar estate",
-        "aurora allocation",
-        "library wines release",
-    ]
-    if any(term in subject_l for term in weak_marketing_subjects):
+    if any(term in text for term in NOISE_BODY_TERMS):
         return True
     return False
 
@@ -286,73 +322,114 @@ def maybe_extract_visual_fallback(subject: str, raw: str, sender_email: str = ""
     html_title_match = re.search(r"<title>(.*?)</title>", raw, re.I | re.S)
     html_title = re.sub(r"\s+", " ", unescape(html_title_match.group(1))).strip() if html_title_match else ""
     alt_text = extract_image_alt_text(raw)
-    special_parts = []
 
-    sender_email = (sender_email or "").lower()
-    sender_domain = (sender_domain or "").lower()
-    if sender_domain == "whiteroseestate.com" or sender_email.endswith("@whiteroseestate.com"):
-        special_parts.extend(re.findall(r"(?:comedy night|open house|spring release|release celebration|memorial day weekend)", raw, re.I))
-
-    fallback_parts = [part for part in [html_title, alt_text, "\n".join(special_parts)] if part]
+    fallback_parts = [part for part in [html_title, alt_text] if part]
     fallback = "\n".join(fallback_parts).strip()
     if not fallback:
         return None, None
     image_heavy = len(strip_html_to_text(raw)) < 1200 or bool(re.search(r"<img\b", raw, re.I))
     if not image_heavy:
         return None, None
-    mode = "html-title-alt"
-    return fallback, mode
+    return fallback, "html-title-alt"
 
 
-def parse_white_rose_multi_events(subject: str, raw: str, sender_email: str, sender: str, message_id: str) -> list[Candidate]:
-    sender_email = (sender_email or "").lower()
-    if not sender_email.endswith("@whiteroseestate.com"):
+_CATALOG_CACHE: dict | None = None
+
+
+def load_multi_event_catalog() -> dict:
+    global _CATALOG_CACHE
+    if _CATALOG_CACHE is not None:
+        return _CATALOG_CACHE
+    if not CATALOG_PATH.exists():
+        _CATALOG_CACHE = {"entries": []}
+        return _CATALOG_CACHE
+    try:
+        data = json.loads(CATALOG_PATH.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        log_progress(f"WARN: could not load catalog {CATALOG_PATH}: {exc}")
+        _CATALOG_CACHE = {"entries": []}
+        return _CATALOG_CACHE
+    _CATALOG_CACHE = data
+    return _CATALOG_CACHE
+
+
+def _parse_catalog_datetime(value: str, tz: ZoneInfo) -> datetime:
+    dt = datetime.fromisoformat(value)
+    return dt.replace(tzinfo=tz) if dt.tzinfo is None else dt
+
+
+def parse_catalog_multi_events(subject: str, raw: str, sender_email: str, sender_domain: str, sender: str, message_id: str) -> list[Candidate]:
+    catalog = load_multi_event_catalog()
+    entries = catalog.get("entries", [])
+    if not entries:
         return []
     title_match = re.search(r"<title>(.*?)</title>", raw, re.I | re.S)
-    title = re.sub(r"\s+", " ", unescape(title_match.group(1))).strip() if title_match else ""
-    if title.lower() != "spring open house":
-        return []
+    html_title = re.sub(r"\s+", " ", unescape(title_match.group(1))).strip().lower() if title_match else ""
+    tz_name = catalog.get("timezone") or "America/Los_Angeles"
+    tz = ZoneInfo(tz_name)
 
-    events = [
-        {
-            "subject": "Spring Open House",
-            "date": datetime(2026, 4, 11, 13, 0, tzinfo=TZ),
-            "end": datetime(2026, 4, 11, 17, 0, tzinfo=TZ),
-            "location": "6250 NE Hilltop Ln, Dayton, OR 97114",
-            "mode": "white-rose-image-fallback",
-        },
-        {
-            "subject": "25th Anniversary Party",
-            "date": datetime(2026, 5, 30, 17, 0, tzinfo=TZ),
-            "end": datetime(2026, 5, 30, 19, 0, tzinfo=TZ),
-            "location": "",
-            "mode": "white-rose-image-fallback",
-        },
-        {
-            "subject": "Dining Alfresco",
-            "date": datetime(2026, 6, 27, 18, 0, tzinfo=TZ),
-            "end": datetime(2026, 6, 27, 20, 0, tzinfo=TZ),
-            "location": "",
-            "mode": "white-rose-image-fallback",
-        },
-    ]
-    return [
-        build_candidate(message_id, item["subject"], sender, item["date"], item["end"], raw, item["mode"], item["location"], "")
-        for item in events
-    ]
+    sender_email_l = (sender_email or "").lower()
+    sender_domain_l = (sender_domain or "").lower()
+
+    for entry in entries:
+        entry_domain = (entry.get("sender_domain") or "").lower()
+        entry_email = (entry.get("sender_email") or "").lower()
+        if entry_domain and entry_domain != sender_domain_l and not sender_email_l.endswith(f"@{entry_domain}"):
+            continue
+        if entry_email and entry_email != sender_email_l:
+            continue
+        title_needle = (entry.get("html_title_match") or "").lower()
+        if title_needle and title_needle not in html_title:
+            continue
+        mode = entry.get("extraction_mode") or "catalog-image-fallback"
+        candidates = []
+        for item in entry.get("events", []):
+            try:
+                start_dt = _parse_catalog_datetime(item["start"], tz)
+                end_dt = _parse_catalog_datetime(item["end"], tz)
+            except (KeyError, ValueError) as exc:
+                log_progress(f"WARN: bad catalog entry for {entry_domain}: {exc}")
+                continue
+            candidates.append(
+                build_candidate(
+                    message_id,
+                    item["subject"],
+                    sender,
+                    start_dt,
+                    end_dt,
+                    raw,
+                    mode,
+                    item.get("location", ""),
+                    item.get("rsvp_url", ""),
+                )
+            )
+        if candidates:
+            return candidates
+    return []
+
+
+PAST_DATE_GRACE_DAYS = 7
 
 
 def parse_date(body: str) -> datetime | None:
     pat = re.compile(r"\b(" + "|".join(list(MONTH_MAP.keys()) + list(MONTH_ABBR.keys())) + r")\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(20\d{2}))?", re.I)
+    now = datetime.now(TZ)
+    stale_cutoff = now - timedelta(days=PAST_DATE_GRACE_DAYS)
     for m in pat.finditer(body.lower()):
         mon = m.group(1).lower()
         month = MONTH_MAP.get(mon, MONTH_ABBR.get(mon[:3]))
         day = int(m.group(2))
-        year = int(m.group(3)) if m.group(3) else datetime.now(TZ).year
+        year_explicit = m.group(3) is not None
+        year = int(m.group(3)) if year_explicit else now.year
         try:
             base = datetime(year, month, day, 18, 0, tzinfo=TZ)
         except ValueError:
             continue
+        if not year_explicit and base < stale_cutoff:
+            try:
+                base = base.replace(year=year + 1)
+            except ValueError:
+                continue
 
         time_patterns = [
             r"\b(\d{1,2})(?::(\d{2}))?\s?(am|pm)\s*(?:-|to|–|—)\s*(\d{1,2})(?::(\d{2}))?\s?(am|pm)\b",
@@ -451,6 +528,15 @@ def normalized_text(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
 
 
+FUZZY_DUP_RATIO = 0.82
+
+
+def title_similarity(a: str, b: str) -> float:
+    if not a or not b:
+        return 0.0
+    return SequenceMatcher(None, a, b).ratio()
+
+
 def duplicate_reason(existing: list[dict], candidate: Candidate) -> str | None:
     day = candidate.start[:10]
     subject_norm = normalized_text(candidate.subject)
@@ -464,9 +550,11 @@ def duplicate_reason(existing: list[dict], candidate: Candidate) -> str | None:
         summary_norm = normalized_text(summary)
         if message_marker in description:
             return "message-id"
-        if evstart.startswith(day) and summary_norm == subject_norm:
+        if not evstart.startswith(day):
+            continue
+        if summary_norm and summary_norm == subject_norm:
             return "same-day-title"
-        if evstart.startswith(day) and subject_norm and summary_norm and (subject_norm in summary_norm or summary_norm in subject_norm):
+        if title_similarity(subject_norm, summary_norm) >= FUZZY_DUP_RATIO:
             return "same-day-fuzzy-title"
     return None
 
@@ -511,7 +599,11 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
-    allow_senders, allow_domains, allowlist_meta = load_allowlist()
+    try:
+        allow_senders, allow_domains, allowlist_meta = load_allowlist()
+    except AllowlistError as exc:
+        log_progress(f"ERROR: {exc}")
+        raise SystemExit(2) from exc
     start_ts = time.time()
     log_progress(f"loaded allowlist senders={len(allow_senders)} domains={len(allow_domains)}")
     messages = search_messages(args.account, args.days, args.max, allow_senders, allow_domains)
@@ -553,14 +645,16 @@ def main() -> None:
             skipped.append({"message_id": message_id, "sender_email": sender_email, "reason": "missing-subject"})
             continue
 
-        white_rose_candidates = parse_white_rose_multi_events(subject, raw, sender_email, sender, message_id)
-        if white_rose_candidates:
-            log_progress(f"white-rose-match message_id={message_id} candidates={len(white_rose_candidates)}")
-            for candidate in white_rose_candidates:
-                log_progress(f"white-rose-candidate message_id={message_id} subject={candidate.subject} start={candidate.start}")
+        catalog_candidates = parse_catalog_multi_events(
+            subject, raw, sender_email, sender_domain, sender, message_id
+        )
+        if catalog_candidates:
+            log_progress(f"catalog-match message_id={message_id} candidates={len(catalog_candidates)}")
+            for candidate in catalog_candidates:
+                log_progress(f"catalog-candidate message_id={message_id} subject={candidate.subject} start={candidate.start}")
                 dup_reason = duplicate_reason(existing, candidate)
                 if dup_reason or candidate.message_id in seen_ids:
-                    log_progress(f"white-rose-duplicate message_id={message_id} subject={candidate.subject} reason={dup_reason or 'seen-message-id'}")
+                    log_progress(f"catalog-duplicate message_id={message_id} subject={candidate.subject} reason={dup_reason or 'seen-message-id'}")
                     duplicates.append({**candidate.__dict__, "reason": dup_reason or "seen-message-id"})
                     continue
                 if not args.dry_run:
@@ -571,7 +665,7 @@ def main() -> None:
                         "start": {"dateTime": candidate.start},
                     })
                     seen_ids.add(candidate.message_id)
-                log_progress(f"white-rose-created message_id={message_id} subject={candidate.subject}")
+                log_progress(f"catalog-created message_id={message_id} subject={candidate.subject}")
                 created.append(candidate.__dict__)
             continue
 

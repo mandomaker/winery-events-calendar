@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "description": "Catalog of pre-known multi-event announcements for image-heavy emails that can't be parsed from text. Matched by sender domain + email HTML <title>. Add entries as new image-only newsletters are discovered.",
+  "timezone": "America/Los_Angeles",
+  "entries": [
+    {
+      "sender_domain": "whiteroseestate.com",
+      "html_title_match": "spring open house",
+      "extraction_mode": "white-rose-image-fallback",
+      "events": [
+        {
+          "subject": "Spring Open House",
+          "start": "2026-04-11T13:00:00",
+          "end": "2026-04-11T17:00:00",
+          "location": "6250 NE Hilltop Ln, Dayton, OR 97114"
+        },
+        {
+          "subject": "25th Anniversary Party",
+          "start": "2026-05-30T17:00:00",
+          "end": "2026-05-30T19:00:00"
+        },
+        {
+          "subject": "Dining Alfresco",
+          "start": "2026-06-27T18:00:00",
+          "end": "2026-06-27T20:00:00"
+        }
+      ]
+    }
+  ]
+}
